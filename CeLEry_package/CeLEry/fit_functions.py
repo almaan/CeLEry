@@ -27,7 +27,7 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def Fit_cord (data_train, location_data = None, hidden_dims = [30, 25, 15], num_epochs_max = 500, path = "", filename = "PreOrg_Mousesc", batch_size = 4, num_workers = 1, number_error_try = 15, initial_learning_rate = 0.0001, seednum = 2021):
+def Fit_cord (data_train, location_data = None, hidden_dims = [30, 25, 15], num_epochs_max = 500, path = "", filename = "PreOrg_Mousesc", batch_size = 4, num_workers = 1, number_error_try = 15, initial_learning_rate = 0.0001, seednum = 2021, save_model = False,):
     #
     random.seed(seednum)
     torch.manual_seed(seednum)
@@ -53,13 +53,15 @@ def Fit_cord (data_train, location_data = None, hidden_dims = [30, 25, 15], num_
     CoOrg = TrainerExe()
     CoOrg.train(model = DNNmodel, train_loader = t_loader, num_epochs= num_epochs_max, RCcountMax = number_error_try, learning_rate = initial_learning_rate)
     #
-    try:
-        os.makedirs("{path}".format(path = path))
-    except FileExistsError:
-        print("Folder already exists")
-    filename3 = "{path}/{filename}.obj".format(path = path, filename = filename) #"../output/CeLEry/Mousesc/PreOrg_Mousesc.obj"
-    filehandler2 = open(filename3, 'wb') 
-    pickle.dump(DNNmodel, filehandler2)
+    if save_model:
+        try:
+            os.makedirs("{path}".format(path = path))
+        except FileExistsError:
+            print("Folder already exists")
+        filename3 = "{path}/{filename}.obj".format(path = path, filename = filename) #"../output/CeLEry/Mousesc/PreOrg_Mousesc.obj"
+        filehandler2 = open(filename3, 'wb') 
+        pickle.dump(DNNmodel, filehandler2)
+
     return DNNmodel
 
 
@@ -151,7 +153,7 @@ def Fit_domain (data_train, domain_weights, domain_data = None, domainkey = "lay
     filehandler2 = open(filename3, 'wb') 
     pickle.dump(DNNmodel, filehandler2)
 
-def Predict_cord (data_test, path = "", filename = "PreOrg_Mousesc", location_data = None):
+def Predict_cord (data_test, model = None, path = None, filename = None, location_data = None, save_pred = False):
     testdata= (data_test.X.A if issparse(data_test.X) else data_test.X)
     if location_data is None:
         location_data = pd.DataFrame(np.ones((data_test.shape[0],2)), columns = ["psudo1", "psudo2"])
@@ -160,16 +162,17 @@ def Predict_cord (data_test, path = "", filename = "PreOrg_Mousesc", location_da
     vdata_rs = np.swapaxes(vdatax, 1, 2)
     DataVal = wrap_gene_location(vdata_rs, location_data)
     Val_loader= torch.utils.data.DataLoader(DataVal, batch_size=1, num_workers = 1)
+    
     #
-    cord = report_prop_method_sc(folder = path,
-                        name = filename, data_test = data_test,
-                        Val_loader = Val_loader)
+    cord = report_prop_method_sc(Val_loader,DNNmodel = model, folder = path,
+                        name = filename, data_test = data_test, save_pred = False,
+                        )
     data_test.obs["x_cord_pred"] = cord[:,0]
     data_test.obs["y_cord_pred"] = cord[:,1]
     return cord
 
 
-def report_prop_method_sc (folder, name, data_test, Val_loader, outname = ""):
+def report_prop_method_sc (Val_loader, DNNmodel = None, folder = None, name = None, data_test = None,outname = None, save_pred = False):
     """
         Report the results of the proposed methods in comparison to the other method
         :folder: string: specified the folder that keep the proposed DNN method
@@ -178,17 +181,25 @@ def report_prop_method_sc (folder, name, data_test, Val_loader, outname = ""):
         :Val_loader: Dataload: the validation data from dataloader
         :outname: string: specified the name of the output, default is the same as the name
     """
-    filename2 = "{folder}/{name}.obj".format(folder = folder, name = name)
-    filehandler = open(filename2, 'rb') 
-    DNNmodel = pickle.load(filehandler)
+    if DNNmodel is None:
+	    filename2 = "{folder}/{name}.obj".format(folder = folder, name = name)
+	    filehandler = open(filename2, 'rb') 
+	    DNNmodel = pickle.load(filehandler)
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    DNNmodel = DNNmodel.to(device)
     #
     coords_predict = np.zeros((data_test.obs.shape[0],2))
     #
     for i, img in enumerate(Val_loader):
+        img[0] = img[0].to(device)
         recon = DNNmodel(img)
-        coords_predict[i,:] = recon[0].detach().numpy()
-    np.savetxt("{folder}/{name}_predmatrix.csv".format(folder = folder, name = name), coords_predict, delimiter=",")
+        coords_predict[i,:] = recon[0].cpu().detach().numpy()
+    if save_pred:
+        np.savetxt("{folder}/{name}_predmatrix.csv".format(folder = folder, name = name), coords_predict, delimiter=",")
+
     return coords_predict
+
 
 
 def Predict_region (data_test, path = "", filename = "PreOrg_ConfScore", location_data = None, hist = ""):
